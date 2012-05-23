@@ -1,4 +1,11 @@
-pkg/*
+Guardfile
 *.gem
 .bundle
-Guardfile
+.idea/*
+Gemfile.lock
+pkg/*
+.idea/*
+build.log
+*~
+test/dummy/log/*
+*.DS_Store
