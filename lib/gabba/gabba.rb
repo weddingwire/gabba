@@ -2,6 +2,7 @@
 require "uri"
 require "net/http"
 require 'cgi'
+require 'ga_cookie_parser'
 require File.dirname(__FILE__) + '/version'
 
 module Gabba
@@ -22,7 +23,7 @@ module Gabba
 
     ESCAPES = %w{ ' ! * ) }
 
-    attr_accessor :utmwv, :utmn, :utmhn, :utmcs, :utmul, :utmdt, :utmp, :utmac, :utmt, :utmcc, :user_agent, :utma
+    attr_accessor :utmwv, :utmn, :utmhn, :utmcs, :utmul, :utmdt, :utmp, :utmac, :utmt, :utmcc, :user_agent, :utma, :utmb, :utmz, :utmip
 
     # Public: Initialize Gabba Google Analytics Tracking Object.
     #
@@ -35,7 +36,7 @@ module Gabba
     #
     #   g = Gabba::Gabba.new("UT-1234", "mydomain.com")
     #
-    def initialize(ga_acct, domain, agent = Gabba::USER_AGENT)
+    def initialize(ga_acct, domain, agent = Gabba::USER_AGENT, remote_ip = '')
       @utmwv = "4.4sh" # GA version
       @utmcs = "UTF-8" # charset
       @utmul = "en-us" # language
@@ -46,7 +47,7 @@ module Gabba
       @utmac = ga_acct
       @utmhn = domain
       @user_agent = agent
-
+      @utmip = utmip_fetch remote_ip
       @custom_vars = []
     end
 
@@ -121,6 +122,21 @@ module Gabba
     #
     def page_view(title, page, utmhid = random_id)
       check_account_params
+      cookies_parsed = GaCookieParser::GaCookieParser.new(:utmz => @utmz, :utma => @utma)
+      today = Time.now
+      if !@utma.blank? and @utmb.blank?
+        @utma = "#{cookies_parsed.utma_hash[:domain_hash]}.#{cookies_parsed.utma_hash[:visitor_id]}.#{cookies_parsed.utma_hash[:initial_visit_at]}.#{cookies_parsed.utma_hash[:previous_visit_at]}.#{today.to_i}.#{cookies_parsed.utma_hash[:session_counter].to_i+1}"
+      end
+
+      unless @utmb.blank?
+        temp = @utmb.split '.'
+        temp[1] = temp[1].to_i + 1
+        @utmb = temp.join '.'
+      end
+
+      unless @utmz.blank?
+        @utmz = "#{cookies_parsed.utmz_hash[:domain_hash]}.#{cookies_parsed.utmz_hash[:timestamp]}.#{cookies_parsed.utmz_hash[:session_counter].to_i+1}.#{cookies_parsed.utmz_hash[:campaign_number]}.utmcsr=(#{cookies_parsed.utmz_hash[:utmcsr]})|utmccn=(#{cookies_parsed.utmz_hash[:utmccn]})|utmcmd=(#{cookies_parsed.utmz_hash[:utmcmd]})"
+      end
       hey(page_view_params(title, page, utmhid))
     end
 
@@ -137,7 +153,8 @@ module Gabba
         :utmhid => utmhid,
         :utmp => page,
         :utmac => @utmac,
-        :utmcc => @utmcc || cookie_params
+        :utmcc => @utmcc || cookie_params,
+        :utmip => @utmip
       }
 
       # Add custom vars if present
@@ -289,14 +306,25 @@ module Gabba
     #   g.identify_user(cookies[:__utma])
     #   g.page_view("something", "track/me")
     #
-    def identify_user(utma)
-      @utma = utma
+    def identify_user(options={})
+      @utma = options[:utma] unless options[:utma].nil?
+      @utmb = options[:utmb] unless options[:utmb].nil?
+      @utmz = options[:utmz] unless options[:utmz].nil?
     end
 
     # create magical cookie params used by GA for its own nefarious purposes
-    def cookie_params(utma1 = random_id, utma2 = rand(1147483647) + 1000000000, today = Time.now)
-      @utma ||= "1.#{utma1}00145214523.#{utma2}.#{today.to_i}.#{today.to_i}.15"
-      "__utma=#{@utma};+__utmz=1.#{today.to_i}.1.1.utmcsr=(direct)|utmccn=(direct)|utmcmd=(none);"
+    def cookie_params(utma1 = domain_hash(@utmhn), utma2 = rand(1147483647) + 1000000000, today = Time.now)
+      if @utma.blank?
+        @utma = "#{utma1}.#{utma2}.#{today.to_i}.#{today.to_i}.#{today.to_i}.1"
+      end
+      if @utmb.blank?
+        @utmb = "#{utma1}.1.10.#{today.to_i}"
+      end
+
+      if @utmz.blank?
+        @utmz = "#{utma1}.#{today.to_i}.1.1.utmcsr=(direct)|utmccn=(direct)|utmcmd=(none)"
+      end
+      "__utma=#{@utma};+__utmz=#{@utmz};"
     end
 
     # sanity check that we have needed params to even call GA
@@ -330,6 +358,28 @@ module Gabba
       t.to_s.gsub(/[\*'!\)]/) do |m|
         "'#{ESCAPES.index(m)}"
       end
+    end
+    def domain_hash(domain_name)
+      return 1 if domain_name.blank?
+      hash = 0
+      length = domain_name.length
+      pos = length -1
+      while pos >= 0
+        current = domain_name[pos].ord
+        hash = ((hash << 6) & 0xfffffff) + current + (current << 14)
+        left_most_7 = hash & 0xfe00000
+        if left_most_7 != 0
+          hash ^= left_most_7 >> 21
+        end
+        pos -= 1
+      end
+      return hash
+    end
+    def utmip_fetch(remote_ip)
+      return '' if remote_ip.blank?
+      # Capture the first three octects of the IP address and replace the forth
+      # with 0, e.g. 124.455.3.123 becomes 124.455.3.0
+      remote_ip.to_s.gsub(/([^.]+\.[^.]+\.[^.]+\.)[^.]+/,"\\1") + "0"
     end
 
   end # Gabba Class
