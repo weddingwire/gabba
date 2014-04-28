@@ -339,7 +339,7 @@ module Gabba
 
       response = Net::HTTP.start(GOOGLE_HOST) do |http|
         request = Net::HTTP::Get.new("#{BEACON_PATH}?#{query}")
-        request["User-Agent"] = URI.escape(user_agent)
+        request["User-Agent"] = URI.escape(user_agent.to_s)
         request["Accept"] = "*/*"
         http.request(request)
       end
